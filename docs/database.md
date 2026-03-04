@@ -115,6 +115,10 @@ CREATE TABLE goal_requirements (
   requirement_id UUID NOT NULL REFERENCES requirements(id) ON DELETE CASCADE,
   PRIMARY KEY (goal_id, requirement_id)
 );
+
+-- Covers the requirement_id lookup in GET /api/requirements (the PK is (goal_id, requirement_id)
+-- and does not help when filtering by requirement_id alone):
+CREATE INDEX ON goal_requirements(requirement_id);
 ```
 
 A requirement can be linked to many goals. This join table is the mechanism for shared requirement deduplication. When `GET /api/requirements` is called, each requirement row is returned once with a `shared_by_goals` array containing all goals it is linked to.
@@ -197,14 +201,18 @@ All pre-seeded game data (Achievement Diaries, quests, skill requirements) is bu
 
 ### Seed Data Pattern
 
-Pre-seeded goals have `user_id = NULL`. Example for one diary:
+Pre-seeded goals have `user_id = NULL`. The `id` column is `UUID PRIMARY KEY` — seed files must use valid UUID literals, not text aliases. Generate stable IDs once with `uuidgen | tr '[:upper:]' '[:lower:]'` and never change them after a migration ships.
 
 ```sql
 -- 002_seed_diaries.sql
+--
+-- Stable hardcoded UUIDs for pre-seeded content.
+-- Generate once with: uuidgen | tr '[:upper:]' '[:lower:]'
+-- Never change these after the migration is shipped.
 
 INSERT INTO goals (id, user_id, name, description, category, diary_region, diary_tier, is_preseeded)
 VALUES (
-  'preset-morytania-hard',
+  'd4e5f6a7-b8c9-4d0e-1f2a-3b4c5d6e7f80',
   NULL,
   'Morytania Hard',
   'Complete all Hard tier tasks in Morytania.',
@@ -216,14 +224,14 @@ VALUES (
 
 -- Skill thresholds
 INSERT INTO goal_skill_requirements (goal_id, skill, level) VALUES
-  ('preset-morytania-hard', 'Agility',      70),
-  ('preset-morytania-hard', 'Slayer',        70),
-  ('preset-morytania-hard', 'Construction',  50);
+  ('d4e5f6a7-b8c9-4d0e-1f2a-3b4c5d6e7f80', 'Agility',      70),
+  ('d4e5f6a7-b8c9-4d0e-1f2a-3b4c5d6e7f80', 'Slayer',        70),
+  ('d4e5f6a7-b8c9-4d0e-1f2a-3b4c5d6e7f80', 'Construction',  50);
 
 -- Non-skill requirement (shared across all Morytania tiers)
 INSERT INTO requirements (id, user_id, label, type, canonical_key, is_preseeded, quest_name)
 VALUES (
-  'preset-req-pip',
+  'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d',
   NULL,
   'Priest in Peril',
   'quest',
@@ -233,7 +241,10 @@ VALUES (
 );
 
 INSERT INTO goal_requirements (goal_id, requirement_id)
-VALUES ('preset-morytania-hard', 'preset-req-pip');
+VALUES (
+  'd4e5f6a7-b8c9-4d0e-1f2a-3b4c5d6e7f80',
+  'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d'
+);
 ```
 
 ### Activating a Pre-Seeded Goal

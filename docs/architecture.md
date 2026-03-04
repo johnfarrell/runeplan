@@ -99,14 +99,12 @@ All configuration is provided via environment variables. Copy `.env.example` to 
 | Variable | Required | Description |
 |---|---|---|
 | `DB_PASSWORD` | Yes | PostgreSQL password for the `runeplan` user |
-| `SESSION_SECRET` | Yes | Random string (min 32 chars) for session signing |
 | `DISCORD_CLIENT_ID` | No | Discord OAuth app client ID — leave blank to disable |
 | `DISCORD_CLIENT_SECRET` | No | Discord OAuth app client secret |
 
 ```bash
 # .env.example
 DB_PASSWORD=changeme
-SESSION_SECRET=replace-with-long-random-string-at-least-32-chars
 
 # Optional — leave blank to disable Discord login
 DISCORD_CLIENT_ID=

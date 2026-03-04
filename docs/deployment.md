@@ -9,7 +9,7 @@ RunePlan is designed to be self-hosted with a single command. Everything needed 
 ```bash
 git clone https://github.com/your-org/runeplan
 cd runeplan
-cp .env.example .env       # edit DB_PASSWORD and SESSION_SECRET
+cp .env.example .env       # edit DB_PASSWORD
 docker compose up -d
 ```
 
@@ -41,7 +41,6 @@ services:
     build: ./backend
     environment:
       DATABASE_URL:          postgres://runeplan:${DB_PASSWORD}@db:5432/runeplan
-      SESSION_SECRET:        ${SESSION_SECRET}
       DISCORD_CLIENT_ID:     ${DISCORD_CLIENT_ID:-}
       DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
     depends_on:

@@ -25,7 +25,7 @@ This directory contains the full technical implementation brief for the RunePlan
 ```bash
 git clone https://github.com/your-org/runeplan
 cd runeplan
-cp .env.example .env        # fill in DB_PASSWORD and SESSION_SECRET
+cp .env.example .env        # fill in DB_PASSWORD
 docker compose up -d
 # App available at http://localhost:3000
 ```

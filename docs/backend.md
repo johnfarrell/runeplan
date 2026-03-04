@@ -21,7 +21,7 @@ require (
 )
 ```
 
-No ORMs. No HTTP client libraries. No config parsing libraries. All queries are hand-written SQL with `pgx` named parameters.
+No ORMs. No HTTP client libraries. No config parsing libraries. All queries are hand-written SQL with `pgx` positional parameters.
 
 ---
 
@@ -33,14 +33,36 @@ No ORMs. No HTTP client libraries. No config parsing libraries. All queries are 
 func main() {
     pool := db.NewPool(os.Getenv("DATABASE_URL"))
     defer pool.Close()
+    db.RunMigrations(pool)
 
-    db.RunMigrations(pool) // golang-migrate; safe to call on every startup
+    shutdownCtx, cancel := context.WithCancel(context.Background())
+    defer cancel()
 
     r := buildRouter(pool)
+
+    // Start session cleanup goroutine (uses shutdownCtx — see Session cleanup below)
+    startSessionCleanup(pool, shutdownCtx)
+
+    srv := &http.Server{Addr: ":8080", Handler: r}
+
+    go func() {
+        quit := make(chan os.Signal, 1)
+        signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+        <-quit
+        cancel() // stop background goroutines
+        ctx, done := context.WithTimeout(context.Background(), 10*time.Second)
+        defer done()
+        srv.Shutdown(ctx)
+    }()
+
     log.Printf("listening on :8080")
-    log.Fatal(http.ListenAndServe(":8080", r))
+    if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+        log.Fatal(err)
+    }
 }
 ```
+
+Import additions: `os/signal`, `syscall`.
 
 ---
 
@@ -127,6 +149,13 @@ _, err := crypto_rand.Read(b)
 token := hex.EncodeToString(b) // 64 hex chars
 ```
 
+**Context key type:** Use an unexported integer type to avoid collisions with other middleware that may use string keys:
+```go
+// In internal/auth/
+type contextKey int
+const ctxKeyUser contextKey = iota
+```
+
 **SessionMiddleware:**
 ```go
 func SessionMiddleware(pool *pgxpool.Pool) func(http.Handler) http.Handler {
@@ -149,13 +178,22 @@ func SessionMiddleware(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 }
 ```
 
-**Session cleanup:** A goroutine in `main.go` runs every 24 hours:
+**Session cleanup:** A goroutine started from `main.go` runs every 24 hours. Use `time.NewTicker` (not `time.Tick`) so the ticker can be stopped when the server shuts down. The `shutdownCtx` is the context created in `main()` above:
 ```go
-go func() {
-    for range time.Tick(24 * time.Hour) {
-        pool.Exec(context.Background(), "DELETE FROM sessions WHERE expires_at < NOW()")
-    }
-}()
+func startSessionCleanup(pool *pgxpool.Pool, ctx context.Context) {
+    go func() {
+        ticker := time.NewTicker(24 * time.Hour)
+        defer ticker.Stop()
+        for {
+            select {
+            case <-ticker.C:
+                pool.Exec(ctx, "DELETE FROM sessions WHERE expires_at < NOW()")
+            case <-ctx.Done():
+                return
+            }
+        }
+    }()
+}
 ```
 
 ### Discord OAuth
@@ -172,6 +210,23 @@ Discord OAuth is entirely optional. If `DISCORD_CLIENT_ID` is empty, both OAuth 
 3. Fetch user from `GET https://discord.com/api/users/@me`.
 4. Upsert user row (match on email; if new, create with null password).
 5. Create session, set cookie, redirect to `/`.
+
+---
+
+## User Profile
+
+### Skill Level Update (`PATCH /api/user/me`)
+
+`skills` is a JSONB column. Merge incoming skill levels atomically using PostgreSQL's `||` operator — avoids a Go-side read-modify-write round-trip:
+
+```sql
+UPDATE users
+SET skills = skills || $1::jsonb
+WHERE id = $2
+RETURNING *;
+```
+
+Pass only the skills the client wants to update; unmentioned skills are preserved. This is a partial merge, not a replacement.
 
 ---
 
@@ -208,16 +263,28 @@ type SkillThreshold struct {
     Goals     []GoalSummary `json:"goals"`
 }
 
-// After querying:
+// After querying, accumulate into a map then convert to a sorted slice:
+ladderMap := make(map[string]*SkillLadder)
 for _, row := range rows {
-    ladder := findOrCreate(&ladders, row.Skill)
-    ladder.CurrentLevel = user.Skills[row.Skill] // from user JSONB
+    if _, ok := ladderMap[row.Skill]; !ok {
+        ladderMap[row.Skill] = &SkillLadder{
+            Skill:        row.Skill,
+            CurrentLevel: user.Skills[row.Skill], // from user JSONB
+        }
+    }
+    ladder := ladderMap[row.Skill]
     ladder.Thresholds = append(ladder.Thresholds, SkillThreshold{
         Level:     row.Level,
         Satisfied: user.Skills[row.Skill] >= row.Level,
         Goals:     []GoalSummary{{ID: row.GoalID, Name: row.GoalName}},
     })
 }
+// Convert map to sorted slice for deterministic JSON output
+ladders := make([]SkillLadder, 0, len(ladderMap))
+for _, l := range ladderMap {
+    ladders = append(ladders, *l)
+}
+sort.Slice(ladders, func(i, j int) bool { return ladders[i].Skill < ladders[j].Skill })
 ```
 
 This query will always be fast — a user will never have more than a few dozen active goals, and there are only 23 skills. No pagination or caching needed.
@@ -280,9 +347,18 @@ var HiscoresSkillOrder = []string{
 }
 ```
 
-**Parsing:**
+**HTTP client:** Use a package-level client with a timeout — `http.DefaultClient` has no timeout and a hung OSRS API call would permanently block a goroutine:
+```go
+var hiscoresClient = &http.Client{Timeout: 10 * time.Second}
+```
+Replace all `http.Get(...)` calls in `SyncHiscores` with `hiscoresClient.Get(...)`.
+
+**Parsing:** The CSV response has **Overall/Total as line 0** before the 23 skills. Skip it before iterating `HiscoresSkillOrder`:
 ```go
 lines := strings.Split(strings.TrimSpace(body), "\n")
+if len(lines) > 0 {
+    lines = lines[1:] // skip "Overall" row at index 0
+}
 skills := make(map[string]int)
 for i, skillName := range HiscoresSkillOrder {
     if i >= len(lines) { break }
