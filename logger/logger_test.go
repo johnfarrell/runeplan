@@ -1,4 +1,4 @@
-package loggerd
+package logger
 
 import (
 	"testing"
