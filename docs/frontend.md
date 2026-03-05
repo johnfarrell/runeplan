@@ -1,353 +1,332 @@
 # Frontend
 
-Framework: React 18 + TypeScript. Tooling: Vite. Styling: Tailwind CSS utility classes only — no component library. State: `useReducer` + Context — no external state library. HTTP: native `fetch` — no Axios.
+The frontend is server-rendered HTML using [a-h/templ](https://templ.guide). Interactivity is handled by [HTMX 2.x](https://htmx.org) (server-driven partial updates) and [Alpine.js 3.x](https://alpinejs.dev) (client-side UI state). Styling uses [Tailwind CSS](https://tailwindcss.com) utility classes only.
+
+There is no JavaScript build step, no bundler, and no Node.js in production. Static files (`htmx.min.js`, `alpine.min.js`, `app.css`) are committed to the repository and embedded in the Go binary via `go:embed`.
 
 ---
 
-## TypeScript Configuration
+## Templ
 
-```json
-{
-  "compilerOptions": {
-    "strict": true,
-    "target": "ES2020",
-    "lib": ["ES2020", "DOM"],
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "jsx": "react-jsx",
-    "baseUrl": "src"
-  }
+### What it is
+
+Templ compiles `.templ` files into Go functions. Each component is a typed Go function — no string templates, no runtime parsing.
+
+```templ
+// internal/goals/templates/goal_item.templ
+package templates
+
+import "github.com/johnfarrell/runeplan/internal/goals"
+
+templ GoalItem(goal goals.Goal) {
+    <li id={ "goal-" + goal.ID } class="flex items-center gap-2 p-2 rounded hover:bg-slate-700">
+        <span class="flex-1 text-sm">{ goal.Name }</span>
+        <span class="text-xs text-slate-400">{ goal.Category }</span>
+        <button
+            hx-delete={ "/htmx/goals/" + goal.ID }
+            hx-target={ "#goal-" + goal.ID }
+            hx-swap="outerHTML"
+            class="text-red-400 hover:text-red-300 text-xs"
+        >×</button>
+    </li>
 }
 ```
 
-`strict: true` is non-negotiable. No `any`, no implicit returns, no unchecked index access.
+### Code generation
+
+Run `templ generate` before `go build`. This produces `*_templ.go` files alongside each `.templ` file. Both files are committed.
+
+```bash
+# Generate all templates
+templ generate
+
+# Watch mode during development
+templ generate --watch
+```
+
+### Rendering from handlers
+
+Use `httputil.Render` to write a component to the response:
+
+```go
+// internal/httputil/render.go
+func Render(w http.ResponseWriter, r *http.Request, status int, component templ.Component) {
+    w.Header().Set("Content-Type", "text/html; charset=utf-8")
+    w.WriteHeader(status)
+    component.Render(r.Context(), w)
+}
+```
+
+Never use `templ.Handler` directly. Always use `httputil.Render` so status codes and content-type headers are set consistently.
+
+### Layout
+
+Full pages use the base layout which includes all script and style tags:
+
+```templ
+// internal/templates/layout/base.templ
+package layout
+
+templ Base(title string, content templ.Component) {
+    <!DOCTYPE html>
+    <html lang="en" class="h-full bg-slate-900 text-slate-100">
+    <head>
+        <meta charset="UTF-8"/>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+        <title>{ title } — RunePlan</title>
+        <link rel="stylesheet" href="/static/app.css"/>
+        <script src="/static/htmx.min.js"></script>
+        <script defer src="/static/alpine.min.js"></script>
+    </head>
+    <body class="h-full" hx-boost="true">
+        @nav()
+        <main>
+            @content
+        </main>
+    </body>
+    </html>
+}
+```
+
+HTMX fragment endpoints (returning partial HTML for swapping) do **not** use the base layout — they return only the component markup.
 
 ---
 
-## Type Definitions
+## HTMX
 
-All types live in `src/types/index.ts`. This file mirrors the Go structs exactly and is the single source of truth for type shapes on the frontend. Do not define ad-hoc types inline in components.
+HTMX handles all data mutations and partial page updates without writing JavaScript.
 
-```typescript
-// src/types/index.ts
+### Core attributes used
 
-export type GoalCategory =
-  | 'achievement_diary'
-  | 'quest'
-  | 'skill_milestone'
-  | 'boss_kill'
-  | 'item_obtain'
-  | 'custom';
+| Attribute | Purpose |
+|---|---|
+| `hx-get="/path"` | Issue GET on trigger (default: click) |
+| `hx-post="/path"` | Issue POST on trigger |
+| `hx-patch="/path"` | Issue PATCH on trigger |
+| `hx-delete="/path"` | Issue DELETE on trigger |
+| `hx-target="#selector"` | Element to swap into |
+| `hx-swap="outerHTML"` | Replace entire target element |
+| `hx-swap="innerHTML"` | Replace inner content of target |
+| `hx-trigger="change"` | Custom trigger (input change, etc.) |
+| `hx-include="#form"` | Include another element's inputs in request |
+| `hx-indicator="#spinner"` | Show element while request is in-flight |
+| `hx-push-url="true"` | Update browser URL bar on navigation |
 
-export type DiaryTier = 'easy' | 'medium' | 'hard' | 'elite';
+### Endpoint conventions
 
-export type RequirementType = 'quest' | 'kill_count' | 'item_obtain' | 'freeform';
+HTMX endpoints live under `/htmx/`. They return HTML fragments (no base layout wrapper). Full page routes live at top-level paths (`/`, `/planner`, `/browse`, `/profile`).
 
-export interface GoalSummary {
-  id: string;
-  name: string;
+```
+GET  /planner                     → Full HTML page (base layout + planner panels)
+GET  /htmx/goals                  → <ul> of goal items (GoalSidebar fragment)
+POST /htmx/goals                  → <li> of new goal (GoalItem fragment, swapped into list)
+DELETE /htmx/goals/{id}           → Empty string (HTMX removes the target element)
+GET  /htmx/requirements           → RequirementList fragment
+PATCH /htmx/requirements/{id}     → Updated RequirementRow fragment
+GET  /htmx/skills                 → SkillLadder list fragment
+POST /htmx/user/sync              → Updated SkillGrid fragment after Hiscores sync
+```
+
+### Example: goal creation
+
+```templ
+// Template: form that posts and swaps the result into the list
+templ AddGoalForm() {
+    <form
+        hx-post="/htmx/goals"
+        hx-target="#goal-list"
+        hx-swap="beforeend"
+        class="flex gap-2"
+    >
+        <input type="text" name="name" placeholder="Goal name" class="input" required/>
+        <button type="submit" class="btn-primary">Add</button>
+    </form>
 }
+```
 
-export interface Goal {
-  id: string;
-  user_id: string;
-  name: string;
-  description: string;
-  category: GoalCategory;
-  diary_region?: string;
-  diary_tier?: DiaryTier;
-  is_preseeded: boolean;
-  is_completed: boolean;
-  sort_order: number;
-  created_at: string;
+```go
+// Handler: returns only the new <li> fragment
+func Create(pool *pgxpool.Pool) http.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request) {
+        // ... parse form, insert into db ...
+        httputil.Render(w, r, http.StatusCreated, templates.GoalItem(goal))
+    }
 }
+```
 
-export interface Requirement {
-  id: string;
-  label: string;
-  type: RequirementType;
-  is_preseeded: boolean;
-  is_completed: boolean;
-  notes: string;
-  canonical_key?: string;
-  quest_name?: string;
-  boss_name?: string;
-  kill_target?: number;
-  kill_current?: number;
-  item_name?: string;
-  shared_by_goals: GoalSummary[];
+### `hx-boost`
+
+`hx-boost="true"` on `<body>` upgrades all same-origin `<a>` clicks to HTMX fetches, swapping only `<main>` content and updating the browser URL. This gives SPA-like navigation without JavaScript routing.
+
+### Out-of-band swaps
+
+Use `hx-swap-oob="true"` on elements returned in a response when a single action needs to update multiple parts of the page (e.g. updating both the goal sidebar count and the requirement list after activating a catalog goal).
+
+---
+
+## Alpine.js
+
+Alpine handles UI state that doesn't require a server round-trip.
+
+### When to use Alpine vs HTMX
+
+| Situation | Use |
+|---|---|
+| Toggle a modal open/closed | Alpine (`x-show`, `x-data`) |
+| Fetch and display server data | HTMX |
+| Form field validation feedback | Alpine |
+| Submit a form and update DOM | HTMX |
+| Accordion expand/collapse | Alpine |
+| Skill ladder expand/collapse | Alpine (no server call needed) |
+
+### Skill ladder expand/collapse
+
+The skill ladder row toggles expanded state client-side — Alpine is the right tool because no data changes:
+
+```templ
+templ SkillLadderRow(ladder goals.SkillLadder) {
+    <div x-data="{ open: false }" class={ ladderBorderColor(ladder) }>
+        <button @click="open = !open" class="w-full flex items-center gap-2 p-2">
+            <span>{ ladder.Skill }</span>
+            <span>{ fmt.Sprintf("%d", ladder.CurrentLevel) }</span>
+            <span x-show="!open">▶</span>
+            <span x-show="open">▼</span>
+        </button>
+        <div x-show="open" x-collapse>
+            for _, threshold := range ladder.Thresholds {
+                @SkillThresholdRung(threshold, ladder.CurrentLevel)
+            }
+        </div>
+    </div>
 }
+```
 
-export interface SkillThreshold {
-  level: number;
-  satisfied: boolean;
-  goals: GoalSummary[];
-}
+### Modal pattern
 
-export interface SkillLadder {
-  skill: string;
-  current_level: number;
-  notes: string;
-  thresholds: SkillThreshold[];
-}
+```templ
+templ AddGoalModal() {
+    <div x-data="{ open: false }">
+        <button @click="open = true" class="btn-primary">+ Add Goal</button>
 
-export interface User {
-  id: string;
-  rsn: string;
-  skills: Record<string, number>;
-  last_hiscores_sync?: string;
-}
-
-export interface CatalogGoal {
-  id: string;
-  name: string;
-  description: string;
-  category: GoalCategory;
-  diary_region?: string;
-  diary_tier?: DiaryTier;
-  skill_thresholds: Array<{ skill: string; level: number }>;
-  requirements: Array<{ label: string; type: RequirementType; canonical_key: string }>;
+        <div x-show="open" x-cloak class="fixed inset-0 bg-black/50 flex items-center justify-center">
+            <div @click.outside="open = false" class="bg-slate-800 rounded-lg p-6 w-full max-w-lg">
+                <h2 class="text-lg font-semibold mb-4">Add Goal</h2>
+                <!-- catalog browser loaded via HTMX when modal opens -->
+                <div hx-get="/htmx/catalog/diaries" hx-trigger="revealed">
+                    Loading...
+                </div>
+                <button @click="open = false" class="btn-secondary">Cancel</button>
+            </div>
+        </div>
+    </div>
 }
 ```
 
 ---
 
-## API Layer
+## Tailwind CSS
 
-Each file in `src/api/` exports typed async functions. Always include `credentials: 'include'` so the session cookie is sent. Throw on non-OK responses so callers can handle errors uniformly.
+### Setup
 
-```typescript
-// src/api/client.ts — shared fetch wrapper
-const BASE = '/api';
+Tailwind standalone CLI is used — no Node.js required.
 
-export async function apiFetch<T>(
-  path: string,
-  init?: RequestInit
-): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json', ...init?.headers },
-    ...init,
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error ?? 'Unknown error');
-  }
-  return res.json() as Promise<T>;
+```bash
+# Development (watch mode)
+tailwindcss --input static/app.css.src --output static/app.css --watch --content "./internal/**/*.templ"
+
+# Production (minified)
+tailwindcss --input static/app.css.src --output static/app.css --minify --content "./internal/**/*.templ"
+```
+
+The `tailwind.config.js` content paths point at `.templ` files:
+
+```js
+// tailwind.config.js
+module.exports = {
+  content: ["./internal/**/*.templ"],
+  theme: { extend: {} },
+  plugins: [],
 }
 ```
 
-```typescript
-// src/api/goals.ts
-import { apiFetch } from './client';
-import type { Goal } from '../types';
+The compiled `static/app.css` is committed to the repository. The Tailwind CLI is only needed when changing template markup — not for running the app.
 
-export const listGoals = () =>
-  apiFetch<Goal[]>('/goals');
+### Conventions
 
-export const createGoal = (body: Partial<Goal> & { catalog_goal_id?: string }) =>
-  apiFetch<Goal>('/goals', { method: 'POST', body: JSON.stringify(body) });
-
-export const updateGoal = (id: string, patch: Partial<Goal>) =>
-  apiFetch<Goal>(`/goals/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
-
-export const deleteGoal = (id: string) =>
-  apiFetch<void>(`/goals/${id}`, { method: 'DELETE' });
-```
-
-```typescript
-// src/api/skills.ts
-import { apiFetch } from './client';
-import type { SkillLadder } from '../types';
-
-export const listSkillLadders = () =>
-  apiFetch<SkillLadder[]>('/skills');
-
-export const addSkillThreshold = (goalId: string, skill: string, level: number) =>
-  apiFetch<void>(`/goals/${goalId}/skills`, {
-    method: 'POST',
-    body: JSON.stringify({ skill, level }),
-  });
-
-export const removeSkillThreshold = (goalId: string, skill: string) =>
-  apiFetch<void>(`/goals/${goalId}/skills/${skill}`, { method: 'DELETE' });
-```
-
----
-
-## State Management
-
-Global state lives in a single `useReducer` in `src/context/AppContext.tsx`. The state shape mirrors the API responses directly. No derived state is stored — completion percentages, shared counts, and similar computations happen in components or pure utility functions.
-
-```typescript
-// src/context/AppContext.tsx
-
-interface AppState {
-  user: User | null;
-  goals: Goal[];
-  requirements: Requirement[];
-  skillLadders: SkillLadder[];
-  loading: boolean;
-  error: string | null;
-}
-
-type Action =
-  | { type: 'SET_USER';          payload: User }
-  | { type: 'SET_GOALS';         payload: Goal[] }
-  | { type: 'ADD_GOAL';          payload: Goal }
-  | { type: 'UPDATE_GOAL';       payload: Goal }
-  | { type: 'REMOVE_GOAL';       id: string }
-  | { type: 'SET_REQUIREMENTS';  payload: Requirement[] }
-  | { type: 'UPDATE_REQUIREMENT';payload: Requirement }
-  | { type: 'SET_SKILL_LADDERS'; payload: SkillLadder[] }
-  | { type: 'SET_LOADING';       payload: boolean }
-  | { type: 'SET_ERROR';         payload: string | null };
-
-function reducer(state: AppState, action: Action): AppState {
-  switch (action.type) {
-    case 'SET_GOALS':         return { ...state, goals: action.payload };
-    case 'ADD_GOAL':          return { ...state, goals: [...state.goals, action.payload] };
-    case 'UPDATE_GOAL':       return { ...state, goals: state.goals.map(g => g.id === action.payload.id ? action.payload : g) };
-    case 'REMOVE_GOAL':       return { ...state, goals: state.goals.filter(g => g.id !== action.id) };
-    case 'SET_REQUIREMENTS':  return { ...state, requirements: action.payload };
-    case 'UPDATE_REQUIREMENT':return { ...state, requirements: state.requirements.map(r => r.id === action.payload.id ? action.payload : r) };
-    case 'SET_SKILL_LADDERS': return { ...state, skillLadders: action.payload };
-    // ... etc
-    default: return state;
-  }
-}
-```
+- Tailwind utility classes only — no CSS modules, no custom component classes except in `app.css.src` where needed for base reset.
+- No inline `style=` attributes except for dynamically computed values (e.g. progress bar width: `style={ "width: " + pct + "%" }`).
 
 ---
 
 ## Component Structure
 
 ```
-src/components/
-  GoalSidebar.tsx        # Left panel: list of active goals with completion % bars
-  RequirementList.tsx    # Center panel: skill ladders + non-skill requirements
-  RequirementRow.tsx     # Single non-skill requirement row (checkbox, badge, notes)
-  SkillLadderRow.tsx     # Single skill ladder row (see spec below)
-  RequirementDetail.tsx  # Right panel: detail view for selected req or skill
-  AddGoalModal.tsx       # Modal: catalog browser + custom goal creation
-  AddRequirementModal.tsx# Modal: typed requirement creation form
-  ProfilePanel.tsx       # Skill grid + Hiscores sync UI
+internal/
+  templates/
+    layout/
+      base.templ            # HTML shell, loads CSS + HTMX + Alpine
+      nav.templ             # Top navigation, shows logged-in user
+    components/
+      error.templ           # Error message component
+      planner.templ         # 3-panel planner page (wraps domain fragments)
+      browse.templ          # Catalog browse page layout
 
-src/pages/
-  Planner.tsx            # 3-panel layout — composes sidebar, list, detail
-  Browse.tsx             # Catalog browser
-  Profile.tsx            # Player profile + sync
+  auth/templates/
+    login.templ             # Login form page
+    register.templ          # Registration form page
+
+  goals/templates/
+    goal_sidebar.templ      # Left panel: active goals list
+    goal_item.templ         # Single goal row (HTMX swap target)
+    skill_ladder_row.templ  # Expandable skill ladder (Alpine for expand)
+    add_goal_modal.templ    # Alpine modal + HTMX catalog loader
+
+  requirements/templates/
+    requirement_list.templ  # Center panel: skill ladders + non-skill requirements
+    requirement_row.templ   # Single requirement row (HTMX swap target)
+    requirement_detail.templ # Right panel: selected item detail
+
+  user/templates/
+    profile.templ           # Profile page
+    skill_grid.templ        # 23-skill grid with levels + Hiscores sync button
 ```
 
-### `SkillLadderRow` component spec
+### SkillLadderRow spec
 
-This is the most behaviorally complex component in the application.
+This is the most visually complex component.
 
-**Props:**
-```typescript
-interface SkillLadderRowProps {
-  ladder: SkillLadder;
-  onSelect: (skill: string) => void;
-  selected: boolean;
-}
-```
+**Collapsed (default):**
+- Skill name + emoji icon
+- Progress bar: `current_level` → highest threshold level
+- Tick marks at each intermediate threshold
+- Badge: `N/M goals` or `✓ all done`
 
-**Collapsed state (default):**
-- Skill name with an emoji icon (map defined in the component)
-- A single progress bar from `current_level` to the highest threshold level
-- Small tick marks on the bar at each intermediate threshold position
-- A badge: `"N/M goals"` (satisfied thresholds / total thresholds) or `"✓ all done"` if all satisfied
-- `current_level → highest_threshold` label
+**Expanded (Alpine `open = true`):**
+- One rung per threshold, sorted ascending
+- Satisfied rung: green filled circle + strikethrough level + green goal pill
+- Unsatisfied rung: grey outline circle + `"N levels to go"` subtitle
 
-**Expanded state (click to toggle):**
-- Vertical ladder rendered below the header row
-- One rung per threshold, sorted ascending (thresholds arrive pre-sorted from the API)
-- Each rung: circular node + level number + goal name pills
-- Satisfied rungs: green filled node, strikethrough level number, green goal pill
-- Unsatisfied rungs: grey outline node, `"N levels away"` subtitle
-- No checkbox — completion is read-only, driven solely by `current_level`
-
-**Left border color:**
-- Green if all thresholds satisfied
-- Orange if any unsatisfied
-- Gold if this ladder is the currently selected one
-
-**Important:** `SkillLadderRow` dispatches no state actions. It is purely presentational. Clicking the row calls `onSelect(ladder.skill)`, which the parent uses to open the detail panel.
+**Left border:**
+- Green: all thresholds satisfied
+- Orange: any unsatisfied
+- (Alpine: no click-based color change — color is server-rendered based on satisfaction state)
 
 ---
 
-## Utility Functions
+## Static Assets
 
-Pure functions in `src/utils/` — no side effects, no imports from context.
-
-```typescript
-// src/utils/goals.ts
-
-export function goalCompletionPct(
-  goal: Goal,
-  requirements: Requirement[],
-  skillLadders: SkillLadder[]
-): number {
-  const reqs = requirements.filter(r =>
-    r.shared_by_goals.some(g => g.id === goal.id)
-  );
-  const ladder = skillLadders.filter(l =>
-    l.thresholds.some(t => t.goals.some(g => g.id === goal.id))
-  );
-
-  const totalThresholds = ladder.reduce((n, l) =>
-    n + l.thresholds.filter(t => t.goals.some(g => g.id === goal.id)).length, 0
-  );
-  const satisfiedThresholds = ladder.reduce((n, l) =>
-    n + l.thresholds.filter(t => t.satisfied && t.goals.some(g => g.id === goal.id)).length, 0
-  );
-
-  const total = reqs.length + totalThresholds;
-  if (total === 0) return 0;
-  const done = reqs.filter(r => r.is_completed).length + satisfiedThresholds;
-  return Math.round((done / total) * 100);
-}
+```
+static/
+  htmx.min.js      # HTMX 2.x — download from https://unpkg.com/htmx.org@2.x
+  alpine.min.js    # Alpine.js 3.x — download from https://unpkg.com/alpinejs@3.x
+  app.css          # Compiled Tailwind output
 ```
 
----
+All three files are committed to the repository and embedded in the Go binary:
 
-## Nginx Configuration
-
-```nginx
-# frontend/nginx.conf
-server {
-  listen 80;
-
-  # Serve the React SPA
-  location / {
-    root   /usr/share/nginx/html;
-    index  index.html;
-    try_files $uri $uri/ /index.html;  # SPA client-side routing fallback
-  }
-
-  # Proxy all API requests to the Go backend
-  location /api/ {
-    proxy_pass         http://backend:8080;
-    proxy_set_header   Host $host;
-    proxy_set_header   X-Real-IP $remote_addr;
-    proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
-  }
-
-  location /health {
-    proxy_pass http://backend:8080;
-  }
-}
+```go
+//go:embed static
+var staticFiles embed.FS
 ```
 
-Because Nginx proxies `/api/` to the backend, the frontend makes all requests to its own origin (`/api/...`). No CORS configuration is needed anywhere.
-
----
-
-## Conventions
-
-- `strict: true` in tsconfig — no `any`, no implicit returns.
-- All API functions are in `src/api/` and return typed `Promise<T>`.
-- Components accept typed props — no prop drilling through `unknown` or `Record<string, any>`.
-- No inline styles except where Tailwind cannot express a dynamic value (e.g. a progress bar width computed from a percentage at runtime).
-- Tailwind class names only — no CSS modules, no styled-components.
-- All user-facing text is in English. No i18n infrastructure in v1.
+When upgrading HTMX or Alpine, replace the file and regenerate `app.css` (only needed if new Tailwind classes are used).

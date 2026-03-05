@@ -1,253 +1,128 @@
-# API Reference
+# Route Reference
 
-All endpoints return JSON. All authenticated endpoints require a valid session cookie (`runeplan_session`). Unauthenticated requests to protected routes return `401 Unauthorized`.
+RunePlan has three kinds of routes:
 
-Errors always return:
-```json
-{ "error": "human-readable description" }
-```
+- **Page routes** (`GET /planner`, `GET /browse`, etc.) — return full HTML pages with the base layout. Require a valid session; redirect to `/login` if not authenticated.
+- **HTMX fragment routes** (`/htmx/*`) — return partial HTML for in-place DOM swapping. Used by all CRUD operations and partial page refreshes.
+- **JSON API routes** (`/api/*`) — return `application/json`. Used for catalog data (public), user data export, and the health check.
 
----
+**Error handling:**
+- HTML routes: render the `Error` component with appropriate HTTP status.
+- HTMX routes: same — return an HTML error fragment that HTMX can swap into the page.
+- JSON routes: always return `{ "error": "human-readable description" }`.
 
-## Authentication
-
-| Method | Path | Auth | Body | Response |
-|---|---|---|---|---|
-| `POST` | `/api/auth/register` | — | `{ email, password }` | `201 { user }` |
-| `POST` | `/api/auth/login` | — | `{ email, password }` | `200 { user }` |
-| `POST` | `/api/auth/logout` | ✓ | — | `204` |
-| `GET` | `/api/auth/discord` | — | — | `302` redirect to Discord |
-| `GET` | `/api/auth/discord/callback` | — | — | `302` redirect on success |
-
-Both `register` and `login` set a `runeplan_session` HTTP-only cookie on success. `logout` clears the cookie and deletes the session row from the database.
+**Authentication:**
+- Unauthenticated requests to protected page routes → `302` redirect to `/login`.
+- Unauthenticated HTMX requests (detected via `HX-Request: true` header) → `401` with `HX-Redirect: /login` response header.
 
 ---
 
-## User
+## Page Routes
 
-| Method | Path | Auth | Body / Notes | Response |
-|---|---|---|---|---|
-| `GET` | `/api/user/me` | ✓ | — | `200 User` |
-| `PATCH` | `/api/user/me` | ✓ | Partial: `{ rsn?, skills? }` | `200 User` |
-| `POST` | `/api/user/sync` | ✓ | Fetches Hiscores, updates `skills` | `200 { skills }` or `429` |
-| `GET` | `/api/user/export` | ✓ | Full data export | `200` JSON blob |
-
-`POST /api/user/sync` returns `429 Too Many Requests` if called within 5 seconds of the previous sync (enforced via `last_hiscores_sync`).
-
-`PATCH /api/user/me` accepts a partial body — only provided fields are updated. To manually set skill levels without syncing:
-
-```json
-PATCH /api/user/me
-{
-  "skills": { "Agility": 70, "Slayer": 67 }
-}
-```
-
-The backend merges the provided skills into the existing map — it does not replace the entire `skills` object.
-
-### `User` response shape
-
-```json
-{
-  "id": "uuid",
-  "rsn": "Zezima",
-  "skills": {
-    "Attack": 65,
-    "Agility": 63,
-    "Slayer": 67
-  },
-  "last_hiscores_sync": "2024-03-01T12:00:00Z"
-}
-```
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/login` | Login form page |
+| `GET` | `/register` | Registration form page |
+| `GET` | `/` | Redirects to `/planner` |
+| `GET` | `/planner` | 3-panel planner (auth required) |
+| `GET` | `/browse` | Catalog browser (auth required) |
+| `GET` | `/profile` | User profile + skill sync (auth required) |
 
 ---
 
-## Goals
+## Auth Form Handlers
 
-| Method | Path | Auth | Body / Notes | Response |
-|---|---|---|---|---|
-| `GET` | `/api/goals` | ✓ | — | `200 Goal[]` |
-| `POST` | `/api/goals` | ✓ | See below | `201 Goal` |
-| `PATCH` | `/api/goals/:id` | ✓ | Partial `Goal` fields | `200 Goal` |
-| `DELETE` | `/api/goals/:id` | ✓ | — | `204` |
-
-### `POST /api/goals` — Creating a goal
-
-**Custom goal:**
-```json
-{
-  "name": "Learn the Inferno",
-  "description": "Study and prepare for first Inferno attempt.",
-  "category": "custom"
-}
-```
-
-**Activating a pre-seeded catalog goal:**
-```json
-{
-  "catalog_goal_id": "preset-morytania-hard"
-}
-```
-
-When `catalog_goal_id` is provided, the handler copies the catalog goal and all its requirements and skill thresholds into user-owned rows in a single transaction. The response is the newly created user-owned `Goal`.
-
-### `Goal` response shape
-
-```json
-{
-  "id": "uuid",
-  "user_id": "uuid",
-  "name": "Morytania Hard",
-  "description": "Complete all Hard tier tasks in Morytania.",
-  "category": "achievement_diary",
-  "diary_region": "Morytania",
-  "diary_tier": "hard",
-  "is_preseeded": true,
-  "is_completed": false,
-  "sort_order": 0,
-  "created_at": "2024-03-01T12:00:00Z"
-}
-```
-
-Valid `category` values: `achievement_diary`, `quest`, `skill_milestone`, `boss_kill`, `item_obtain`, `custom`.
-
-Valid `diary_tier` values: `easy`, `medium`, `hard`, `elite`.
-
----
-
-## Skills
-
-| Method | Path | Auth | Body / Notes | Response |
-|---|---|---|---|---|
-| `GET` | `/api/skills` | ✓ | Aggregates across all active goals | `200 SkillLadder[]` |
-| `POST` | `/api/goals/:id/skills` | ✓ | `{ skill, level }` | `201` |
-| `DELETE` | `/api/goals/:id/skills/:skill` | ✓ | — | `204` |
-
-### `GET /api/skills` — Skill Ladder aggregation
-
-This is the primary query for rendering skill requirements in the UI. It returns one `SkillLadder` per skill that appears in any active (non-completed) goal, with all thresholds from all goals aggregated and sorted ascending, and `satisfied` computed server-side against the user's current level.
-
-The frontend renders this response directly — **no client-side computation is required**.
-
-```json
-[
-  {
-    "skill": "Agility",
-    "current_level": 63,
-    "notes": "",
-    "thresholds": [
-      {
-        "level": 70,
-        "satisfied": false,
-        "goals": [
-          { "id": "uuid", "name": "Morytania Hard" }
-        ]
-      },
-      {
-        "level": 72,
-        "satisfied": false,
-        "goals": [
-          { "id": "uuid", "name": "Fremennik Hard" }
-        ]
-      }
-    ]
-  },
-  {
-    "skill": "Slayer",
-    "current_level": 67,
-    "notes": "",
-    "thresholds": [
-      {
-        "level": 70,
-        "satisfied": false,
-        "goals": [
-          { "id": "uuid", "name": "Morytania Hard" }
-        ]
-      }
-    ]
-  }
-]
-```
-
-When the user reaches Agility 72, both thresholds in the Agility ladder flip to `satisfied: true` on the next call to this endpoint. No write is required to record skill completion.
-
----
-
-## Requirements
-
-Requirements in this API are **non-skill requirements only** (quest, kill count, item obtain, freeform). Skill level requirements are managed via the Skills endpoints above.
-
-| Method | Path | Auth | Body / Notes | Response |
-|---|---|---|---|---|
-| `GET` | `/api/requirements` | ✓ | Deduplicated across all active goals | `200 Requirement[]` |
-| `POST` | `/api/requirements` | ✓ | See below | `201 Requirement` |
-| `PATCH` | `/api/requirements/:id` | ✓ | Partial: `{ notes?, kill_current?, is_completed? }` | `200 Requirement` |
-| `DELETE` | `/api/requirements/:id` | ✓ | Also removes all `goal_requirements` rows | `204` |
-| `POST` | `/api/goals/:id/requirements/:req_id` | ✓ | Links an existing requirement to a goal | `201` |
-| `DELETE` | `/api/goals/:id/requirements/:req_id` | ✓ | Unlinks (does not delete the requirement) | `204` |
-
-### `POST /api/requirements` — Creating a requirement
-
-Provide fields appropriate to the `type`. All unrelated fields are ignored.
-
-**Quest:**
-```json
-{ "label": "Priest in Peril", "type": "quest", "quest_name": "Priest in Peril" }
-```
-
-**Kill count:**
-```json
-{ "label": "Kill Zulrah x100", "type": "kill_count", "boss_name": "Zulrah", "kill_target": 100 }
-```
-
-**Item obtain:**
-```json
-{ "label": "Obtain Twisted Bow", "type": "item_obtain", "item_name": "Twisted Bow" }
-```
-
-**Freeform:**
-```json
-{ "label": "Research Jad phases", "type": "freeform" }
-```
-
-For pre-seeded requirements, the backend sets `canonical_key` automatically. For user-created requirements, `canonical_key` is null and deduplication does not apply.
-
-### `Requirement` response shape
-
-```json
-{
-  "id": "uuid",
-  "label": "Priest in Peril",
-  "type": "quest",
-  "is_preseeded": true,
-  "is_completed": false,
-  "notes": "",
-  "canonical_key": "quest:Priest in Peril",
-  "quest_name": "Priest in Peril",
-  "shared_by_goals": [
-    { "id": "uuid", "name": "Morytania Easy" },
-    { "id": "uuid", "name": "Morytania Medium" },
-    { "id": "uuid", "name": "Morytania Hard" }
-  ]
-}
-```
-
-`shared_by_goals` is always present and may be empty. When it contains more than one entry, the UI shows a shared badge.
-
----
-
-## Catalog
-
-Catalog endpoints return pre-seeded read-only game data. No authentication required (catalog data is not user-specific).
-
-| Method | Path | Response | Notes |
+| Method | Path | Body | Response |
 |---|---|---|---|
-| `GET` | `/api/catalog/diaries` | `200 CatalogGoal[]` | All 48 diary goals with thresholds |
-| `GET` | `/api/catalog/quests` | `200 CatalogGoal[]` | All quests (Phase 2) |
-| `GET` | `/api/catalog/skills` | `200 string[]` | Ordered list of all 23 skill names |
+| `POST` | `/auth/register` | `email`, `password` (form) | `303` redirect to `/planner` on success; re-render form with error on failure |
+| `POST` | `/auth/login` | `email`, `password` (form) | `303` redirect to `/planner` on success; re-render form with error on failure |
+| `POST` | `/auth/logout` | — | `303` redirect to `/login` |
+| `GET` | `/auth/discord` | — | `302` redirect to Discord |
+| `GET` | `/auth/discord/callback` | — | `303` redirect to `/planner` on success |
 
-### `CatalogGoal` shape
+---
 
+## HTMX Fragment Routes
+
+All `/htmx/*` routes require a valid session. They return HTML fragments (no base layout). Use these as `hx-get`, `hx-post`, `hx-patch`, or `hx-delete` targets in templates.
+
+### Goals
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| `GET` | `/htmx/goals` | — | `<ul>` of all active goals (GoalSidebar fragment) |
+| `POST` | `/htmx/goals` | `name`, `category`, `catalog_goal_id?` (form) | New `<li>` GoalItem fragment |
+| `PATCH` | `/htmx/goals/{id}` | Partial goal fields (form) | Updated GoalItem fragment |
+| `DELETE` | `/htmx/goals/{id}` | — | Empty response (HTMX deletes the element) |
+
+**POST `/htmx/goals` — creating a goal**
+
+Custom goal (form fields):
+```
+name=Learn the Inferno&category=custom
+```
+
+Activating a pre-seeded catalog goal:
+```
+catalog_goal_id=preset-morytania-hard
+```
+
+When `catalog_goal_id` is provided, the handler copies the catalog goal and all its requirements and skill thresholds into user-owned rows in a single transaction.
+
+### Skill Thresholds
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| `GET` | `/htmx/skills` | — | Full SkillLadder list fragment |
+| `POST` | `/htmx/goals/{id}/skills` | `skill`, `level` (form) | Updated SkillLadder list fragment |
+| `DELETE` | `/htmx/goals/{id}/skills/{skill}` | — | Updated SkillLadder list fragment |
+
+### Requirements
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| `GET` | `/htmx/requirements` | — | RequirementList fragment (deduplicated, with `shared_by_goals`) |
+| `POST` | `/htmx/requirements` | See below | New RequirementRow fragment |
+| `PATCH` | `/htmx/requirements/{id}` | `notes?`, `kill_current?`, `is_completed?` (form) | Updated RequirementRow fragment |
+| `DELETE` | `/htmx/requirements/{id}` | — | Empty response |
+| `POST` | `/htmx/goals/{id}/requirements/{req_id}` | — | Updated RequirementRow fragment (now shared) |
+| `DELETE` | `/htmx/goals/{id}/requirements/{req_id}` | — | Updated RequirementRow fragment (unlinked) |
+
+**POST `/htmx/requirements` — creating a requirement**
+
+Provide fields appropriate to the `type`:
+
+Quest: `label=Priest+in+Peril&type=quest&quest_name=Priest+in+Peril`
+
+Kill count: `label=Kill+Zulrah+x100&type=kill_count&boss_name=Zulrah&kill_target=100`
+
+Item obtain: `label=Obtain+Twisted+Bow&type=item_obtain&item_name=Twisted+Bow`
+
+Freeform: `label=Research+Jad+phases&type=freeform`
+
+### User / Profile
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| `GET` | `/htmx/user/me` | — | ProfileFragment (skill grid + account info) |
+| `PATCH` | `/htmx/user/me` | Partial: `rsn?`, `skills?` (form / JSON) | Updated ProfileFragment |
+| `POST` | `/htmx/user/sync` | — | Updated SkillGrid fragment, or `429` HTML error if synced within 5 seconds |
+
+`PATCH /htmx/user/me` accepts skill levels as form fields: `skills[Agility]=70&skills[Slayer]=67`. The backend merges the provided skills into the existing map — it does not replace the entire `skills` object.
+
+---
+
+## JSON API Routes
+
+### Catalog (public — no authentication required)
+
+| Method | Path | Response |
+|---|---|---|
+| `GET` | `/api/catalog/diaries` | `200 CatalogGoal[]` — all 48 diary goals with thresholds |
+| `GET` | `/api/catalog/quests` | `200 CatalogGoal[]` — all quests (Phase 2) |
+| `GET` | `/api/catalog/skills` | `200 string[]` — ordered list of all 23 skill names |
+
+**`CatalogGoal` shape:**
 ```json
 {
   "id": "preset-morytania-hard",
@@ -266,12 +141,88 @@ Catalog endpoints return pre-seeded read-only game data. No authentication requi
 }
 ```
 
----
+### User Export (authenticated)
 
-## Health Check
+| Method | Path | Response |
+|---|---|---|
+| `GET` | `/api/user/export` | `200` JSON blob — full dump of user's goals, requirements, skill levels |
+
+### Health Check
 
 ```
 GET /health
 ```
 
-Returns `200 { "status": "ok" }`. No authentication required. Used by Docker Compose health checks and any external uptime monitors.
+Returns `200 { "status": "ok" }`. No authentication required. Used by Docker Compose health checks.
+
+---
+
+## Data Shapes (for template context, not HTTP responses)
+
+These are the Go structs that handlers build and pass to templates. They mirror the database schema and inform how templates render data.
+
+### `Goal`
+```go
+type Goal struct {
+    ID          string
+    UserID      string
+    Name        string
+    Description string
+    Category    string    // "achievement_diary" | "quest" | "skill_milestone" | "boss_kill" | "item_obtain" | "custom"
+    DiaryRegion string
+    DiaryTier   string    // "easy" | "medium" | "hard" | "elite"
+    IsPreseeded bool
+    IsCompleted bool
+    SortOrder   int
+    CreatedAt   time.Time
+}
+```
+
+### `Requirement`
+```go
+type Requirement struct {
+    ID           string
+    Label        string
+    Type         string    // "quest" | "kill_count" | "item_obtain" | "freeform"
+    IsPreseeded  bool
+    IsCompleted  bool
+    Notes        string
+    CanonicalKey string
+    QuestName    string
+    BossName     string
+    KillTarget   int
+    KillCurrent  int
+    ItemName     string
+    SharedByGoals []GoalSummary
+}
+```
+
+### `SkillLadder`
+```go
+type SkillLadder struct {
+    Skill        string
+    CurrentLevel int
+    Thresholds   []SkillThreshold
+}
+
+type SkillThreshold struct {
+    Level     int
+    Satisfied bool           // CurrentLevel >= Level
+    Goals     []GoalSummary
+}
+
+type GoalSummary struct {
+    ID   string
+    Name string
+}
+```
+
+### `User`
+```go
+type User struct {
+    ID               string
+    RSN              string
+    Skills           map[string]int
+    LastHiscoresSync *time.Time
+}
+```

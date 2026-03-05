@@ -2,7 +2,7 @@
 
 ## Migration Strategy
 
-All schema changes are managed by `golang-migrate` and run automatically on backend startup. Migration files live in `backend/migrations/` and are numbered sequentially.
+All schema changes are managed by `golang-migrate` and run automatically on backend startup. Migration files live in `migrations/` and are numbered sequentially. They are embedded in the Go binary via `go:embed` so no external files are needed at runtime.
 
 **Never modify existing migration files.** If a change is needed, add a new migration file. The runner tracks which migrations have been applied and will only execute new ones.
 
