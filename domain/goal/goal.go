@@ -7,7 +7,6 @@ import (
 )
 
 // Type classifies what kind of achievement a Goal represents.
-// This drives how completion is determined and how the UI presents it.
 type Type string
 
 const (
@@ -27,10 +26,7 @@ func (t Type) Valid() bool {
 	return false
 }
 
-// SkillThreshold is the minimum level or XP required in a Skill to satisfy
-// a goal's Skill requirement.
-// Thresholds are global per-user per-skill: achieving level 72 agility
-// satisfies every threshold at or below 72 across all active goals.
+// SkillThreshold is the minimum level required in a Skill to satisfy a goal.
 type SkillThreshold struct {
 	Skill skill.Skill
 	XP    skill.XP
@@ -41,7 +37,6 @@ func NewSkillLevelThreshold(s skill.Skill, level int) (SkillThreshold, error) {
 	if !s.Valid() {
 		return SkillThreshold{}, skill.ErrInvalidSkill
 	}
-
 	l, err := skill.NewLevel(level)
 	if err != nil {
 		return SkillThreshold{}, err
@@ -55,47 +50,53 @@ func NewSkillLevelThreshold(s skill.Skill, level int) (SkillThreshold, error) {
 }
 
 func (s SkillThreshold) IsSatisfiedByLevel(current skill.Level) bool {
-	return s.Level.Value() > current.Value()
+	return current.Value() >= s.Level.Value()
 }
 
 func (s SkillThreshold) IsSatisfiedByXP(current skill.XP) bool {
-	return s.XP.Value() > current.Value()
+	return current.Value() >= s.XP.Value()
 }
 
-type Requirement struct {
+// RequirementProgress tracks a user's completion state for a catalog requirement.
+type RequirementProgress struct {
+	GoalID        string
+	RequirementID string
+	Description   string // denormalised for display
+	Completed     bool
+	CompletedAt   *time.Time
+}
+
+// CustomRequirement is a user-added freeform requirement on a goal.
+type CustomRequirement struct {
 	ID          string
 	GoalID      string
 	Description string
 	Completed   bool
+	CompletedAt *time.Time
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
-	CompletedAt *time.Time
 }
 
-func (r *Requirement) Complete(at time.Time) {
-	r.Completed = true
-	r.UpdatedAt = at
-	r.CompletedAt = &at
-}
-
-func (r *Requirement) Reopen(at time.Time) {
-	r.Completed = false
-	r.CompletedAt = nil
-	r.UpdatedAt = at
-}
-
+// Goal is a per-RSN activated goal. It references a catalog goal and tracks progress.
 type Goal struct {
 	ID          string
-	UserID      string
+	RSNID       string
 	CatalogID   *string
 	Title       string
 	Type        Type
+	Notes       string
 	Completed   bool
+	CompletedAt *time.Time
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
-	CompletedAt *time.Time
 
-	Requirements    []Requirement
-	SkillThresholds []SkillThreshold
-	PrerequisiteIDs []string
+	// Loaded on demand
+	Requirements       []RequirementProgress
+	CustomRequirements []CustomRequirement
+}
+
+func (g *Goal) Complete(at time.Time) {
+	g.Completed = true
+	g.CompletedAt = &at
+	g.UpdatedAt = at
 }

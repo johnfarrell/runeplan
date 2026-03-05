@@ -1,0 +1,51 @@
+package catalog
+
+import (
+	domcatalog "github.com/johnfarrell/runeplan/domain/catalog"
+	"github.com/johnfarrell/runeplan/interfaces/templates"
+	"strconv"
+)
+
+templ Detail(g *domcatalog.Goal) {
+	@templates.Base(g.Title) {
+		<div class="mb-4">
+			<a href="/browse" class="text-stone-400 hover:text-stone-200 text-sm">&larr; Back to Browse</a>
+		</div>
+		<h1 class="text-2xl font-bold text-yellow-300 mb-2">{ g.Title }</h1>
+		if g.Description != "" {
+			<p class="text-stone-300 mb-6">{ g.Description }</p>
+		}
+
+		if len(g.SkillReqs) > 0 {
+			<section class="mb-6">
+				<h2 class="text-lg font-semibold mb-2">Skill Requirements</h2>
+				<ul class="space-y-1">
+					for _, sr := range g.SkillReqs {
+						<li class="flex gap-2 text-sm">
+							<span class="capitalize text-stone-300">{ string(sr.Skill) }</span>
+							<span class="text-yellow-400">{ strconv.Itoa(sr.Level.Value()) }</span>
+						</li>
+					}
+				</ul>
+			</section>
+		}
+
+		if len(g.Requirements) > 0 {
+			<section class="mb-6">
+				<h2 class="text-lg font-semibold mb-2">Requirements</h2>
+				<ul class="space-y-1 list-disc list-inside text-stone-300">
+					for _, req := range g.Requirements {
+						<li>{ req.Description }</li>
+					}
+				</ul>
+			</section>
+		}
+
+		<button
+			class="px-4 py-2 bg-green-700 hover:bg-green-600 rounded font-semibold"
+			hx-post="/htmx/goals/activate"
+			hx-vals={ `{"catalog_id":"` + g.ID + `"}` }
+			hx-target="#planner-list"
+		>Add to Planner</button>
+	}
+}

@@ -1,0 +1,48 @@
+package goal
+
+import (
+	domgoal "github.com/johnfarrell/runeplan/domain/goal"
+)
+
+templ GoalCard(g domgoal.Goal) {
+	<div id={ "goal-" + g.ID } class="bg-stone-800 border border-stone-700 rounded p-4">
+		<div class="flex justify-between items-start mb-3">
+			<div>
+				<span class="font-semibold text-yellow-300">{ g.Title }</span>
+				<span class="ml-2 text-xs text-stone-400 uppercase">{ string(g.Type) }</span>
+			</div>
+			if !g.Completed {
+				<button
+					class="text-xs px-2 py-1 bg-green-800 hover:bg-green-700 rounded"
+					hx-post={ "/htmx/goals/" + g.ID + "/complete" }
+					hx-target={ "#goal-" + g.ID }
+					hx-swap="outerHTML"
+				>Complete</button>
+			} else {
+				<span class="text-xs text-green-400">Completed</span>
+			}
+		</div>
+		if len(g.Requirements) > 0 {
+			<ul class="space-y-1">
+				for _, req := range g.Requirements {
+					@RequirementRow(req)
+				}
+			</ul>
+		}
+	</div>
+}
+
+templ RequirementRow(req domgoal.RequirementProgress) {
+	<li id={ "req-" + req.RequirementID } class="flex items-center gap-2 text-sm">
+		<input
+			type="checkbox"
+			checked?={ req.Completed }
+			hx-post={ "/htmx/requirements/" + req.RequirementID + "/toggle" }
+			hx-vals={ `{"goal_id":"` + req.GoalID + `"}` }
+			hx-target={ "#req-" + req.RequirementID }
+			hx-swap="outerHTML"
+			class="accent-yellow-400"
+		/>
+		<span class={ templ.KV("line-through text-stone-500", req.Completed) }>{ req.Description }</span>
+	</li>
+}
