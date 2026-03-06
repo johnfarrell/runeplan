@@ -1,5 +1,3 @@
--- +migrate Up
-
 -- Sample quests
 INSERT INTO catalog_goals (canonical_key, title, type, description) VALUES
   ('quest.cooks_assistant',      'Cook''s Assistant',        'quest', 'Help the cook at Lumbridge Castle.'),
@@ -56,8 +54,3 @@ UNION ALL
 SELECT id, 'prayer', 70 FROM catalog_goals WHERE canonical_key = 'diary.morytania_hard'
 UNION ALL
 SELECT id, 'herblore', 53 FROM catalog_goals WHERE canonical_key = 'diary.morytania_hard';
-
--- +migrate Down
-DELETE FROM catalog_skill_requirements;
-DELETE FROM catalog_requirements;
-DELETE FROM catalog_goals;

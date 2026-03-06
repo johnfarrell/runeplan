@@ -1,5 +1,3 @@
--- +migrate Up
-
 CREATE TABLE users (
   id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -88,16 +86,3 @@ CREATE TABLE custom_requirements (
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
--- +migrate Down
-DROP TABLE IF EXISTS custom_requirements;
-DROP TABLE IF EXISTS goal_requirement_progress;
-DROP TABLE IF EXISTS goals;
-DROP TABLE IF EXISTS catalog_goal_prerequisites;
-DROP TABLE IF EXISTS catalog_boss_requirements;
-DROP TABLE IF EXISTS catalog_item_requirements;
-DROP TABLE IF EXISTS catalog_skill_requirements;
-DROP TABLE IF EXISTS catalog_requirements;
-DROP TABLE IF EXISTS catalog_goals;
-DROP TABLE IF EXISTS user_rsns;
-DROP TABLE IF EXISTS users;
