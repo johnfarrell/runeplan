@@ -1,0 +1,42 @@
+package user
+
+import (
+	"github.com/johnfarrell/runeplan/domain/user"
+	"github.com/johnfarrell/runeplan/interfaces/templates"
+)
+
+templ Profile(u user.User) {
+	@templates.Base("Profile") {
+		<h1 class="text-2xl font-bold mb-6">Profile</h1>
+		if len(u.RSNs) == 0 {
+			<p class="text-stone-400">No RSNs linked. (RSN management coming soon.)</p>
+		} else {
+			<div class="space-y-4">
+				for _, rsn := range u.RSNs {
+					@RSNCard(rsn)
+				}
+			</div>
+		}
+	}
+}
+
+templ RSNCard(rsn user.RSN) {
+	<div id={ "rsn-" + rsn.ID } class="bg-stone-800 border border-stone-700 rounded p-4 flex justify-between items-center">
+		<div>
+			<span class="font-semibold text-yellow-300">{ rsn.RSN }</span>
+			if rsn.SyncedAt != nil {
+				<span class="ml-2 text-xs text-stone-400">Last synced: { rsn.SyncedAt.Format("2006-01-02 15:04") }</span>
+			}
+		</div>
+		<div class="flex items-center gap-2">
+			<span id={ "sync-status-" + rsn.ID } class="text-xs"></span>
+			<button
+				class="px-3 py-1 bg-blue-700 hover:bg-blue-600 rounded text-sm"
+				hx-post="/htmx/sync"
+				hx-vals={ `{"rsn_id":"` + rsn.ID + `","rsn":"` + rsn.RSN + `"}` }
+				hx-target={ "#sync-status-" + rsn.ID }
+				hx-swap="innerHTML"
+			>Sync Hiscores</button>
+		</div>
+	</div>
+}

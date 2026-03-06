@@ -1,0 +1,32 @@
+package templates
+
+templ Base(title string) {
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<meta charset="UTF-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+			<title>{ title } — RunePlan</title>
+			<link rel="stylesheet" href="/static/app.css"/>
+			<script src="/static/htmx.min.js" defer></script>
+			<script src="/static/alpine.min.js" defer></script>
+		</head>
+		<body class="bg-stone-900 text-stone-100 min-h-screen">
+			<nav class="bg-stone-800 border-b border-stone-700 px-4 py-3 flex gap-6 items-center">
+				<span class="font-bold text-yellow-400 text-lg">RunePlan</span>
+				<a href="/browse" class="hover:text-yellow-300">Browse</a>
+				<a href="/planner" class="hover:text-yellow-300">Planner</a>
+				<a href="/profile" class="hover:text-yellow-300">Profile</a>
+			</nav>
+			<main class="max-w-5xl mx-auto px-4 py-8">
+				{ children... }
+			</main>
+		</body>
+	</html>
+}
+
+templ Error(msg string) {
+	<div class="bg-red-900 border border-red-600 text-red-100 px-4 py-3 rounded">
+		{ msg }
+	</div>
+}

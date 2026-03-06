@@ -1,0 +1,69 @@
+package catalog
+
+import (
+	"github.com/johnfarrell/runeplan/domain/goal"
+	domcatalog "github.com/johnfarrell/runeplan/domain/catalog"
+	"github.com/johnfarrell/runeplan/interfaces/templates"
+)
+
+var tabs = []struct {
+	Label string
+	Type  goal.Type
+}{
+	{"Quests", goal.TypeQuest},
+	{"Diaries", goal.TypeDiary},
+	{"Skills", goal.TypeSkill},
+	{"Custom", goal.TypeCustom},
+}
+
+templ Browse(active goal.Type, goals []domcatalog.Goal) {
+	@templates.Base("Browse") {
+		<div class="mb-6 flex gap-2">
+			for _, tab := range tabs {
+				if tab.Type == active {
+					<button class="px-4 py-2 rounded bg-yellow-600 text-stone-900 font-semibold">{ tab.Label }</button>
+				} else {
+					<button
+						class="px-4 py-2 rounded bg-stone-700 hover:bg-stone-600"
+						hx-get={ "/browse?type=" + string(tab.Type) }
+						hx-target="#goal-list"
+						hx-push-url="true"
+					>{ tab.Label }</button>
+				}
+			}
+		</div>
+		<div id="goal-list">
+			@GoalList(goals)
+		</div>
+	}
+}
+
+templ GoalList(goals []domcatalog.Goal) {
+	if len(goals) == 0 {
+		<p class="text-stone-400">No goals found.</p>
+	} else {
+		<div class="grid gap-3">
+			for _, g := range goals {
+				@GoalCard(g)
+			}
+		</div>
+	}
+}
+
+templ GoalCard(g domcatalog.Goal) {
+	<div class="bg-stone-800 border border-stone-700 rounded p-4 flex justify-between items-start">
+		<div>
+			<a href={ templ.SafeURL("/browse/catalog/" + g.ID) } class="font-semibold text-yellow-300 hover:underline">{ g.Title }</a>
+			if g.Description != "" {
+				<p class="text-stone-400 text-sm mt-1">{ g.Description }</p>
+			}
+		</div>
+		<button
+			class="ml-4 shrink-0 px-3 py-1 bg-green-700 hover:bg-green-600 rounded text-sm"
+			hx-post="/htmx/goals/activate"
+			hx-vals={ `{"catalog_id":"` + g.ID + `"}` }
+			hx-swap="none"
+			hx-on:htmx:after-request="if(event.detail.successful) window.location='/planner'"
+		>+ Add</button>
+	</div>
+}

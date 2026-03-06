@@ -1,0 +1,38 @@
+package skill
+
+import (
+	appskill "github.com/johnfarrell/runeplan/application/skill"
+	domskill "github.com/johnfarrell/runeplan/domain/skill"
+	"strconv"
+)
+
+templ Grid(thresholds map[domskill.Skill]appskill.Threshold) {
+	<div id="skills-fragment" class="bg-stone-800 border border-stone-700 rounded p-4 mb-6">
+		<h2 class="text-lg font-semibold mb-3">Skill Requirements</h2>
+		if len(thresholds) == 0 {
+			<p class="text-stone-400 text-sm">No skill requirements across active goals.</p>
+		} else {
+			<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+				for _, s := range domskill.All {
+					if t, ok := thresholds[s]; ok {
+						@SkillRow(t)
+					}
+				}
+			</div>
+		}
+	</div>
+}
+
+templ SkillRow(t appskill.Threshold) {
+	<div class={
+		"rounded p-2 text-xs border",
+		templ.KV("bg-green-900 border-green-700 text-green-100", t.Satisfied),
+		templ.KV("bg-red-900 border-red-700 text-red-100", !t.Satisfied),
+	}>
+		<div class="font-semibold capitalize">{ string(t.Skill) }</div>
+		<div>{ strconv.Itoa(t.Current.Value()) } / { strconv.Itoa(t.Required.Value()) }</div>
+		if !t.Satisfied {
+			<div class="text-xs opacity-75">{ strconv.Itoa(t.XPNeeded) } XP</div>
+		}
+	</div>
+}

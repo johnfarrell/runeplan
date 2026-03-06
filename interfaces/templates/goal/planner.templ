@@ -1,0 +1,21 @@
+package goal
+
+import (
+	domgoal "github.com/johnfarrell/runeplan/domain/goal"
+	"github.com/johnfarrell/runeplan/interfaces/templates"
+)
+
+templ Planner(goals []domgoal.Goal) {
+	@templates.Base("Planner") {
+		<div class="flex justify-between items-center mb-6">
+			<h1 class="text-2xl font-bold">My Planner</h1>
+			<a href="/browse" class="px-3 py-1 bg-stone-700 hover:bg-stone-600 rounded text-sm">+ Browse Goals</a>
+		</div>
+		<div id="skills-fragment" hx-get="/htmx/skills" hx-trigger="load" class="mb-8"></div>
+		<div id="planner-list" class="space-y-4">
+			for _, g := range goals {
+				@GoalCard(g)
+			}
+		</div>
+	}
+}
