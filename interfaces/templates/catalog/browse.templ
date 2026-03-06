@@ -62,8 +62,8 @@ templ GoalCard(g domcatalog.Goal) {
 			class="ml-4 shrink-0 px-3 py-1 bg-green-700 hover:bg-green-600 rounded text-sm"
 			hx-post="/htmx/goals/activate"
 			hx-vals={ `{"catalog_id":"` + g.ID + `"}` }
-			hx-target="#planner-list"
-			hx-swap="beforeend"
+			hx-swap="none"
+			hx-on:htmx:after-request="if(event.detail.successful) window.location='/planner'"
 		>+ Add</button>
 	</div>
 }

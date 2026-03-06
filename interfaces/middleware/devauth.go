@@ -16,7 +16,7 @@ func DevAuth(next http.Handler) http.Handler {
 			{
 				ID:          "00000000-0000-0000-0000-000000000002",
 				UserID:      "00000000-0000-0000-0000-000000000001",
-				RSN:         "Zezima",
+				RSN:         "azvu",
 				SkillLevels: make(map[skill.Skill]skill.XP),
 			},
 		},

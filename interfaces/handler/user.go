@@ -1,14 +1,13 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
 
 	appuser "github.com/johnfarrell/runeplan/application/user"
-	domskill "github.com/johnfarrell/runeplan/domain/skill"
 	"github.com/johnfarrell/runeplan/domain/user"
-	templatesskill "github.com/johnfarrell/runeplan/interfaces/templates/skill"
-	templatesuser "github.com/johnfarrell/runeplan/interfaces/templates/user"
 	"github.com/johnfarrell/runeplan/interfaces/templates"
+	templatesuser "github.com/johnfarrell/runeplan/interfaces/templates/user"
 )
 
 // ProfileHandler returns the profile page.
@@ -43,8 +42,8 @@ func SyncHandler(svc *appuser.Service) http.HandlerFunc {
 			return
 		}
 
-		// Return empty skills fragment — planner will reload via HTMX
-		_ = domskill.All
-		templates.Render(w, r, http.StatusOK, templatesskill.Grid(nil))
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `<span class="text-green-400">Synced!</span>`)
 	}
 }

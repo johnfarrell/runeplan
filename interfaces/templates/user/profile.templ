@@ -28,12 +28,15 @@ templ RSNCard(rsn user.RSN) {
 				<span class="ml-2 text-xs text-stone-400">Last synced: { rsn.SyncedAt.Format("2006-01-02 15:04") }</span>
 			}
 		</div>
-		<button
-			class="px-3 py-1 bg-blue-700 hover:bg-blue-600 rounded text-sm"
-			hx-post="/htmx/sync"
-			hx-vals={ `{"rsn_id":"` + rsn.ID + `","rsn":"` + rsn.RSN + `"}` }
-			hx-target="#skills-fragment"
-			hx-swap="outerHTML"
-		>Sync Hiscores</button>
+		<div class="flex items-center gap-2">
+			<span id={ "sync-status-" + rsn.ID } class="text-xs"></span>
+			<button
+				class="px-3 py-1 bg-blue-700 hover:bg-blue-600 rounded text-sm"
+				hx-post="/htmx/sync"
+				hx-vals={ `{"rsn_id":"` + rsn.ID + `","rsn":"` + rsn.RSN + `"}` }
+				hx-target={ "#sync-status-" + rsn.ID }
+				hx-swap="innerHTML"
+			>Sync Hiscores</button>
+		</div>
 	</div>
 }
