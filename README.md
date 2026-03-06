@@ -1,15 +1,22 @@
 # runeplan
 OSRS Goal Tracker
 
-● State saved. Here's what's persisted:
+## Make Commands
 
-Memory file (MEMORY.md) — updated with:
-- Task progress (1/11 complete, commit 2aed474)
-- Next unblocked tasks: 2, 4, 5
-- Key architectural decisions (gorilla/mux not chi, pgx5:// URL scheme, etc.)
-
-Tasks JSON (docs/plans/2026-03-04-bootstrap-impl.md.tasks.json) — Task 1 marked completed
-
-To resume next session: Start a new conversation in /home/john/projects/runeplan, invoke the
-superpowers-extended-cc:subagent-driven-development skill, and continue with Tasks 2, 4, and 5 (all
-unblocked).
+| Command                                | Description                                  |
+|----------------------------------------|----------------------------------------------|
+| `make`                                 | Generate templates and build (default)       |
+| `make generate`                        | Run `templ generate` (required before build) |
+| `make build`                           | Compile the server binary                    |
+| `make run`                             | Run the server (requires `DATABASE_URL`)     |
+| `make test`                            | Run all tests                                |
+| `make test-verbose`                    | Run all tests with verbose output            |
+| `make test-pkg PKG=./domain/skill/...` | Run tests for a specific package             |
+| `make fmt`                             | Format all Go source files                   |
+| `make lint`                            | Run `golangci-lint`                          |
+| `make vet`                             | Run `go vet`                                 |
+| `make deps`                            | Download and verify dependencies             |
+| `make tidy`                            | Tidy `go.mod` / `go.sum`                     |
+| `make tools`                           | Install dev tools (`templ`, `golangci-lint`) |
+| `make clean`                           | Remove generated files and build artifacts   |
+| `make help`                            | Show all available commands                  |
